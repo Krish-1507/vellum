@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { DocumentSummary } from "@/lib/types";
 import { readSse } from "@/lib/sse";
-import { deleteLocalFile, saveLocalFile } from "@/lib/localfiles";
+import { deleteLocalFile, getLocalFile, saveLocalFile } from "@/lib/localfiles";
 import { IconAlert, IconFile, IconTrash, IconUpload } from "./icons";
 
 function formatBytes(n: number) {
@@ -92,6 +92,39 @@ export function Library() {
     },
     [load],
   );
+
+  async function onRetry(doc: DocumentSummary) {
+    setError(null);
+    const blob = await getLocalFile(doc.id);
+    if (!blob) {
+      setError("The original is not in this browser. Upload the file again to retry.");
+      return;
+    }
+    setBusyName(doc.originalFilename);
+    setProgress("Retrying extraction…");
+    try {
+      const form = new FormData();
+      form.append("file", blob, doc.originalFilename);
+      const res = await fetch(`/api/documents/${doc.id}/reprocess`, { method: "POST", body: form });
+      let failMsg: string | null = null;
+      await readSse(res, {
+        onEvent: (event, data) => {
+          const payload = data as { message?: string };
+          if (event === "status" && payload.message) setProgress(payload.message);
+          if (event === "error") failMsg = payload.message || "Processing failed.";
+        },
+      });
+      const failed = failMsg as string | null;
+      if (failed) throw new Error(failed);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Retry failed.");
+      await load();
+    } finally {
+      setBusyName(null);
+      setProgress(null);
+    }
+  }
 
   async function onDelete(id: string) {
     const prev = docs;
@@ -231,6 +264,15 @@ export function Library() {
                   >
                     Open
                   </Link>
+                )}
+                {doc.status !== "ready" && (
+                  <button
+                    type="button"
+                    onClick={() => void onRetry(doc)}
+                    className="press hidden rounded-[4px] border border-[var(--color-rule)] px-3 py-1.5 text-xs tracking-wide text-[var(--color-ink-soft)] sm:inline"
+                  >
+                    Retry
+                  </button>
                 )}
                 <button
                   type="button"

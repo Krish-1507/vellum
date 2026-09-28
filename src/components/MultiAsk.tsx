@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import type { DocumentSummary } from "@/lib/types";
 import { ChatPane, type FocusCite } from "./ChatPane";
 import { DocumentViewer } from "./DocumentViewer";
@@ -8,6 +9,15 @@ import { DocumentViewer } from "./DocumentViewer";
 type DocDetail = DocumentSummary & { htmlContent: string | null };
 
 export function MultiAsk() {
+  return (
+    <Suspense>
+      <MultiAskInner />
+    </Suspense>
+  );
+}
+
+function MultiAskInner() {
+  const searchParams = useSearchParams();
   const [docs, setDocs] = useState<DocumentSummary[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -20,8 +30,15 @@ export function MultiAsk() {
       .then((j) => {
         const ready = ((j.documents || []) as DocumentSummary[]).filter((d) => d.status === "ready");
         setDocs(ready);
+        // Deep link from Chats history: /ask?docs=id1,id2
+        const wanted = (searchParams.get("docs") || "").split(",").filter(Boolean);
+        if (wanted.length >= 2) {
+          const valid = wanted.filter((id) => ready.some((d) => d.id === id));
+          if (valid.length >= 2) setSelected(valid);
+        }
       })
       .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

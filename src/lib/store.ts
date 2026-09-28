@@ -4,6 +4,7 @@ import { getDb, newId, nowIso, readBigString, writeBigString } from "./firestore
 import { cleanJson, cleanPgText } from "./pgtext";
 import type {
   AgentActivity,
+  Entity,
   ExtractedClause,
   OutlineEntry,
 } from "./types";
@@ -24,6 +25,8 @@ export type DocRow = {
   coverageNote: string | null;
   htmlContent: string | null;
   storagePath: string | null;
+  anonymized: boolean;
+  entitiesJson: Entity[];
   createdAt: Date;
   updatedAt: Date;
 };
@@ -45,6 +48,7 @@ export type ChunkRow = {
   pageEnd: number;
   charStart: number;
   charEnd: number;
+  embedding?: number[] | null;
 };
 
 export type ConvRow = {
@@ -161,6 +165,8 @@ function docFromSnap(id: string, data: Record<string, unknown>): DocRow {
     coverageNote: (data.coverageNote as string | null) ?? null,
     htmlContent: typeof data.htmlContent === "string" ? (data.htmlContent as string) : null,
     storagePath: (data.storagePath as string | null) ?? null,
+    anonymized: Boolean(data.anonymized),
+    entitiesJson: (data.entities as Entity[]) || [],
     createdAt: toDate(data.createdAt),
     updatedAt: toDate(data.updatedAt),
   };
@@ -217,6 +223,8 @@ export async function createDocument(input: {
     htmlContent: null,
     extractedText: "",
     storagePath: null,
+    anonymized: false,
+    entities: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -325,6 +333,7 @@ export async function replaceChunks(id: string, chunks: ChunkRow[]) {
       pageEnd: c.pageEnd,
       charStart: c.charStart,
       charEnd: c.charEnd,
+      embedding: c.embedding && c.embedding.length ? c.embedding : null,
     });
     n += 1;
     if (n >= 400) {
@@ -375,8 +384,27 @@ export async function listChunks(documentId: string): Promise<ChunkRow[]> {
       pageEnd: (v.pageEnd as number) || 1,
       charStart: (v.charStart as number) || 0,
       charEnd: (v.charEnd as number) || 0,
+      embedding: (v.embedding as number[] | null) ?? null,
     };
   });
+}
+
+export async function updateChunkEmbeddings(documentId: string, vectors: Map<number, number[]>) {
+  if (!vectors.size) return;
+  const db = await getDb();
+  const ref = db.collection("documents").doc(documentId);
+  let batch = db.batch();
+  let n = 0;
+  for (const [index, vec] of vectors) {
+    batch.set(ref.collection("chunks").doc(String(index)), { embedding: vec }, { merge: true });
+    n += 1;
+    if (n >= 200) {
+      await batch.commit();
+      batch = db.batch();
+      n = 0;
+    }
+  }
+  if (n > 0) await batch.commit();
 }
 
 // ---------- conversations & messages ----------
@@ -413,6 +441,40 @@ export async function createConversation(title: string, mode: string, documentId
 export async function touchConversation(id: string) {
   const db = await getDb();
   await db.collection("conversations").doc(id).set({ updatedAt: nowIso() }, { merge: true });
+}
+
+export async function getMessage(conversationId: string, messageId: string): Promise<MsgRow | null> {
+  const db = await getDb();
+  const snap = await db
+    .collection("conversations")
+    .doc(conversationId)
+    .collection("messages")
+    .doc(messageId)
+    .get();
+  if (!snap.exists) return null;
+  const v = snap.data()!;
+  return {
+    id: snap.id,
+    conversationId,
+    role: (v.role as string) || "assistant",
+    content: (v.content as string) || "",
+    status: (v.status as string) || "complete",
+    coverage: (v.coverage as string | null) ?? null,
+    coverageNote: (v.coverageNote as string | null) ?? null,
+    activityJson: (v.activity as AgentActivity[]) || [],
+    createdAt: toDate(v.createdAt),
+  };
+}
+
+export async function countMessages(conversationId: string): Promise<number> {
+  const db = await getDb();
+  const snap = await db
+    .collection("conversations")
+    .doc(conversationId)
+    .collection("messages")
+    .count()
+    .get();
+  return snap.data().count;
 }
 
 export async function listConversations(): Promise<ConvRow[]> {

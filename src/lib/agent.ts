@@ -114,7 +114,62 @@ function formatHits(hits: SearchHit[]) {
     .join("\n\n");
 }
 
-function runTool(call: ToolCall, docs: LoadedDoc[]): { result: string; activity: AgentActivity; coverageAll: boolean } {
+// Semantic re-rank: embed the query once, cosine-match chunks that carry
+// cached vectors, and fuse 50/50 with lexical order. Chunks without vectors
+// (old documents, failed embedding) keep their lexical rank. Never throws.
+async function fuseSemantic(
+  query: string,
+  scope: LoadedDoc[],
+  lexical: SearchHit[],
+): Promise<SearchHit[]> {
+  try {
+    const withVec = scope.flatMap((d) => d.chunks.filter((c) => c.embedding?.length));
+    if (!withVec.length) return lexical.slice(0, 5);
+    const { embedBatch, cosine } = await import("./embed");
+    const qv = await embedBatch([query]);
+    if (!qv?.[0]) return lexical.slice(0, 5);
+    const q = qv[0]!;
+    const lexRank = new Map<string, number>();
+    lexical.forEach((h, i) => lexRank.set(`${h.documentId}:${h.text.slice(0, 60)}`, i));
+    const scored = withVec.map((c) => {
+      const sem = cosine(q, c.embedding!);
+      const key = `${c.documentId}:${c.text.slice(0, 60)}`;
+      const lr = lexRank.has(key) ? 1 - lexRank.get(key)! / Math.max(1, lexical.length) : 0;
+      return { c, score: 0.5 * sem + 0.5 * lr };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    const byChunk = new Map<string, SearchHit>();
+    for (const h of lexical) byChunk.set(`${h.documentId}:${h.text.slice(0, 60)}`, h);
+    const out: SearchHit[] = [];
+    for (const s of scored.slice(0, 5)) {
+      const key = `${s.c.documentId}:${s.c.text.slice(0, 60)}`;
+      const known = byChunk.get(key);
+      if (known) {
+        out.push(known);
+        continue;
+      }
+      const owner = scope.find((d) => d.document.id === s.c.documentId)!;
+      out.push({
+        documentId: s.c.documentId,
+        documentName: owner.document.name,
+        chunkIndex: s.c.chunkIndex,
+        heading: s.c.heading,
+        text: s.c.text,
+        pageStart: s.c.pageStart,
+        pageEnd: s.c.pageEnd,
+        score: s.score,
+      });
+    }
+    return out.length ? out : lexical.slice(0, 5);
+  } catch {
+    return lexical.slice(0, 5);
+  }
+}
+
+async function runTool(
+  call: ToolCall,
+  docs: LoadedDoc[],
+): Promise<{ result: string; activity: AgentActivity; coverageAll: boolean }> {
   const name = call.function?.name || "";
   const args = parseArgs(call.function?.arguments || "");
   if (args.__parseError) {
@@ -153,10 +208,11 @@ function runTool(call: ToolCall, docs: LoadedDoc[]): { result: string; activity:
     const hits = searchChunks(
       query,
       scope.map((d) => ({ document: d.document, chunks: d.chunks })),
-      5,
+      10,
     );
+    const fused = await fuseSemantic(query, scope, hits);
     return {
-      result: clip(formatHits(hits)),
+      result: clip(formatHits(fused)),
       activity: {
         kind: "search",
         label: `Searching for “${query.slice(0, 80)}”`,
@@ -324,9 +380,16 @@ export async function runAgent(opts: {
   question: string;
   history: Array<{ role: "user" | "assistant"; content: string }>;
   signal?: AbortSignal;
+  // Hard wall-clock budget (ms). Big files + throttled providers must end in
+  // a graceful partial answer, never a severed stream. Defaults to 100s so
+  // serverless timeouts (often 60–120s) don't cut the response mid-write.
+  deadlineMs?: number;
   onStatus: (activity: AgentActivity) => Promise<void> | void;
   onToken: (token: string) => Promise<void> | void;
 }): Promise<AgentResult> {
+  const startedAt = Date.now();
+  const deadlineMs = opts.deadlineMs ?? 100_000;
+  const outOfTime = () => Date.now() - startedAt > deadlineMs;
   const multi = opts.docs.length > 1;
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt(opts.docs, multi) },
@@ -340,7 +403,7 @@ export async function runAgent(opts: {
   let final = "";
 
   while (rounds < MAX_ROUNDS) {
-    if (opts.signal?.aborted) break;
+    if (opts.signal?.aborted || outOfTime()) break;
     rounds += 1;
     const { content, toolCalls } = await chatComplete({
       messages,
@@ -355,7 +418,7 @@ export async function runAgent(opts: {
         tool_calls: toolCalls,
       });
       for (const call of toolCalls) {
-        const executed = runTool(call, opts.docs);
+        const executed = await runTool(call, opts.docs);
         activity.push(executed.activity);
         await opts.onStatus(executed.activity);
         if (executed.coverageAll) searchedAll = true;
@@ -375,7 +438,9 @@ export async function runAgent(opts: {
   }
 
   if (!final && !opts.signal?.aborted) {
-    await opts.onStatus({ kind: "note", label: "Writing the answer from retrieved passages" });
+    if (!outOfTime()) {
+      await opts.onStatus({ kind: "note", label: "Writing the answer from retrieved passages" });
+    }
     messages.push({
       role: "user",
       content:
@@ -463,16 +528,19 @@ export async function runAgent(opts: {
     })),
   ];
 
+  const timedOut = outOfTime();
   const coverage: "full" | "partial" = searchedAll || opts.docs.every((d) => d.document.charCount < 12000) ? "full" : "partial";
   const coverageNote =
-    coverage === "partial"
-      ? "Only some of the document was retrieved before answering. Absence of a clause is not certain."
-      : null;
+    timedOut && coverage === "full"
+      ? "Time ran short before every corner of the file could be checked. Treat absence of a clause as unconfirmed."
+      : coverage === "partial"
+        ? "Only some of the document was retrieved before answering. Absence of a clause is not certain."
+        : null;
 
   return {
     answer: parsed.answer,
     activity,
-    coverage,
+    coverage: timedOut ? "partial" : coverage,
     coverageNote,
     quotes,
     droppedUnverified: verifiedPack.unverified.length,

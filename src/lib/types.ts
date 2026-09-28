@@ -20,6 +20,12 @@ export type AgentActivity = {
   detail?: string;
 };
 
+export type Entity = {
+  text: string;
+  kind: "person" | "company" | "email" | "phone" | "other";
+  token: string;
+};
+
 export type ComparisonChange = {
   id: string;
   changeType: string;
@@ -47,6 +53,8 @@ export type DocumentSummary = {
   outline: OutlineEntry[];
   clauses: ExtractedClause[];
   hasHtml: boolean;
+  anonymized: boolean;
+  entityCount: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -55,6 +63,7 @@ export type CitationView = {
   id: string;
   documentId: string;
   quoteText: string;
+  locator?: string;
   verified: boolean;
   pageNumber: number | null;
   pageEnd: number | null;

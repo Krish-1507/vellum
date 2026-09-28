@@ -16,6 +16,7 @@ import {
 } from "@/lib/store";
 import type { AgentActivity } from "@/lib/types";
 import { aiConfigured } from "@/lib/ai";
+import { mergeEntities } from "@/lib/anon";
 import { runAgent, type LoadedDoc } from "@/lib/agent";
 import { serializeMessage } from "@/lib/serialize";
 
@@ -127,12 +128,35 @@ export async function POST(req: Request) {
 
       let answer = "";
       const activity: AgentActivity[] = [];
+      // Entities are known before streaming starts, so the live token stream
+      // can be masked too — not just the final payload. The masker holds
+      // back anything that could still be an unfinished match, so entities
+      // split across token boundaries are still caught. The full original
+      // is what gets stored (reversible via the toggle).
+      const streamEntities = mergeEntities(
+        loaded.filter((l) => l.document.anonymized).map((l) => l.document.entitiesJson),
+      );
+      const { createStreamMasker } = await import("@/lib/anon");
+      const masker = createStreamMasker(streamEntities);
+      const sendMasked = (text: string) => {
+        const out = masker.push(text);
+        if (out) send("token", { text: out });
+      };
+      const flushMasked = () => {
+        const out = masker.flush();
+        if (out) send("token", { text: out });
+      };
       try {
+        const deadlineMs = Math.max(
+          15000,
+          Number(process.env.AGENT_DEADLINE_MS || "55000"),
+        );
         const result = await runAgent({
           docs: loaded,
           question,
           history,
           signal: abort,
+          deadlineMs,
           onStatus: async (item) => {
             activity.push(item);
             send("status", item);
@@ -140,9 +164,10 @@ export async function POST(req: Request) {
           },
           onToken: async (token) => {
             answer += token;
-            send("token", { text: token });
+            sendMasked(token);
           },
         });
+        flushMasked();
 
         const stopped = abort.aborted;
         const content = result.answer || answer;
@@ -165,7 +190,7 @@ export async function POST(req: Request) {
         const saved = await updateMessage(assistantMsg.id, conversationId, {});
 
         send("done", {
-          message: serializeMessage(saved!, cites),
+          message: serializeMessage(saved!, cites, streamEntities),
           droppedUnverified: result.droppedUnverified,
         });
       } catch (err) {
@@ -175,7 +200,7 @@ export async function POST(req: Request) {
             status: "stopped",
             activityJson: activity,
           });
-          send("done", { message: serializeMessage(saved, []), droppedUnverified: 0 });
+          send("done", { message: serializeMessage(saved, [], streamEntities), droppedUnverified: 0 });
         } else {
           const message = err instanceof Error ? err.message : "The model failed.";
           await updateMessage(assistantMsg.id, conversationId, {

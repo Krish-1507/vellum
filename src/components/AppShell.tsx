@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import { IconMark, IconSplit, IconStack, IconUpload } from "./icons";
+import { IconChat, IconMark, IconSplit, IconStack, IconUpload } from "./icons";
 
 const NAV = [
   { href: "/", label: "Library", icon: IconUpload },
+  { href: "/chat", label: "Chats", icon: IconChat },
   { href: "/compare", label: "Compare", icon: IconSplit },
   { href: "/ask", label: "Across files", icon: IconStack },
 ];

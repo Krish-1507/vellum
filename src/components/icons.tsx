@@ -3,8 +3,11 @@ import {
   ArrowRight,
   ArrowsLeftRight,
   CaretRight,
+  ChatsCircle,
   Check,
+  DownloadSimple,
   FileText,
+  Microphone,
   PaperPlaneRight,
   Quotes,
   Scales,
@@ -40,3 +43,6 @@ export const IconAlert = make(WarningCircle);
 export const IconFile = make(FileText);
 export const IconClose = make(X);
 export const IconArrow = make(ArrowRight);
+export const IconChat = make(ChatsCircle);
+export const IconMic = make(Microphone);
+export const IconDownload = make(DownloadSimple);

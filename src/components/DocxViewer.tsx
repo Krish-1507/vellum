@@ -18,6 +18,7 @@ export function DocxViewer({ html, quote }: { html: string; quote: string | null
     <div className="vellum-scroll h-full min-h-0 overflow-auto bg-[color-mix(in_srgb,var(--color-ink)_6%,var(--color-paper))] p-4 sm:p-6">
       <article
         ref={ref}
+        dir="auto"
         className="sheet mx-auto max-w-2xl px-8 py-10 text-[15px] leading-relaxed sm:px-12 sm:py-14"
         dangerouslySetInnerHTML={{ __html: html }}
       />

@@ -1,4 +1,5 @@
 import {
+  countMessages,
   findConversationForDocs,
   getConversation,
   latestConversationForDoc,
@@ -7,6 +8,8 @@ import {
   listMessages,
 } from "@/lib/store";
 import { serializeMessage } from "@/lib/serialize";
+import { mergeEntities } from "@/lib/anon";
+import type { Entity } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +19,7 @@ export async function GET(req: Request) {
   const documentId = url.searchParams.get("documentId");
   const ids = url.searchParams.get("documentIds");
   const conversationId = url.searchParams.get("id");
+  const q = (url.searchParams.get("q") || "").trim().toLowerCase();
 
   if (conversationId) {
     const conv = await getConversation(conversationId);
@@ -37,7 +41,22 @@ export async function GET(req: Request) {
   }
 
   const convs = await listConversations();
-  return Response.json({ conversations: convs });
+  const withCounts = await Promise.all(
+    convs.map(async (c) => ({ ...c, messageCount: await countMessages(c.id) })),
+  );
+  const filtered = q
+    ? withCounts.filter((c) => c.title.toLowerCase().includes(q))
+    : withCounts;
+  // Document names for display.
+  const { listDocuments } = await import("@/lib/store");
+  const docs = await listDocuments();
+  const names = Object.fromEntries(docs.map((d) => [d.id, d.name]));
+  return Response.json({
+    conversations: filtered.map((c) => ({
+      ...c,
+      documentNames: c.documentIds.map((id) => names[id] || "Document"),
+    })),
+  });
 }
 
 async function bundle(conversationId: string) {
@@ -45,6 +64,7 @@ async function bundle(conversationId: string) {
   const rows = await listMessages(conversationId);
   const msgIds = rows.map((m) => m.id);
   const cites = await listCitations(conversationId, msgIds);
+  const entities = await entitiesFor(conv?.documentIds || []);
   const byMsg = new Map<string, typeof cites>();
   for (const c of cites) {
     const arr = byMsg.get(c.messageId) || [];
@@ -54,6 +74,15 @@ async function bundle(conversationId: string) {
   return {
     conversation: conv,
     documentIds: conv?.documentIds || [],
-    messages: rows.map((m) => serializeMessage(m, byMsg.get(m.id) || [])),
+    messages: rows.map((m) => serializeMessage(m, byMsg.get(m.id) || [], entities)),
   };
+}
+
+async function entitiesFor(documentIds: string[]): Promise<Entity[]> {
+  if (!documentIds.length) return [];
+  const { getDocument } = await import("@/lib/store");
+  const docs = await Promise.all(documentIds.map((id) => getDocument(id)));
+  return mergeEntities(
+    docs.filter((d) => d?.anonymized).map((d) => d!.entitiesJson),
+  );
 }

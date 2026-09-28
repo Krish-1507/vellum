@@ -6,6 +6,7 @@ import {
   replaceChunks,
   replacePages,
   setDocumentText,
+  updateChunkEmbeddings,
   updateDocument,
 } from "./store";
 import { extractDocx, extractPdf, ScannedPdfError, EmptyDocumentError } from "./extract";
@@ -57,6 +58,23 @@ export async function processDocument(
       outline: extracted.outline,
       clauses: extracted.clauses,
     });
+
+    // Semantic vectors for retrieval, computed once and cached per chunk.
+    // Failures fall back to lexical search — never block readiness.
+    onProgress?.("Indexing meaning (semantic search)…");
+    try {
+      const { embedBatch } = await import("./embed");
+      const vectors = await embedBatch(extracted.chunks.map((c) => `${c.heading || ""}\n${c.text}`));
+      if (vectors) {
+        const map = new Map<number, number[]>();
+        extracted.chunks.forEach((c, i) => {
+          if (vectors[i]) map.set(c.chunkIndex, vectors[i]!);
+        });
+        await updateChunkEmbeddings(id, map);
+      }
+    } catch {
+      // lexical search covers retrieval
+    }
 
     onProgress?.("Ready.");
     return { ok: true as const, pageCount: extracted.pageCount };

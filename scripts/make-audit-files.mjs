@@ -93,3 +93,17 @@ const files = [
 ];
 writeFileSync(path.join(dir, "sample.docx"), zipStore(files));
 console.log("wrote sample.docx, crc check:", crc32("test"));
+
+// Names fixture for the anonymise check.
+writeFileSync(
+  path.join(dir, "names.pdf"),
+  pdfDoc([
+    [
+      { text: "CONSULTING AGREEMENT", size: 16, y: 720 },
+      { text: "This Consulting Agreement is entered into by Acme Ltd (the Client) and John Smith (the Consultant).", size: 10.5, y: 690 },
+      { text: "Notices go to john@acme.com and by phone to +971501234567.", size: 10.5, y: 660 },
+      { text: "The aggregate liability of Acme Ltd shall not exceed AED 50,000.", size: 10.5, y: 630 },
+    ],
+  ]),
+);
+console.log("wrote names.pdf");

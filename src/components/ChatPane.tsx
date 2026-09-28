@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AgentActivity } from "@/lib/types";
 import type { SerializedMessage } from "@/lib/types";
 import { readSse } from "@/lib/sse";
-import { IconAlert, IconCheck, IconQuote, IconSend, IconStop } from "./icons";
+import { IconAlert, IconCheck, IconDownload, IconMic, IconQuote, IconSend, IconStop } from "./icons";
 
 export type FocusCite = {
   documentId: string;
@@ -37,9 +37,12 @@ export function ChatPane({
   const [streaming, setStreaming] = useState(false);
   const [activity, setActivity] = useState<AgentActivity[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [convId, setConvId] = useState<string | null>(conversationId);
+  const [listening, setListening] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const convRef = useRef(conversationId);
+  const recogRef = useRef<{ stop: () => void } | null>(null);
 
   convRef.current = conversationId;
   const docKey = documentIds.join("|");
@@ -125,6 +128,7 @@ export function ChatPane({
               assistantId: string;
             };
             onConversation(meta.conversationId);
+            setConvId(meta.conversationId);
             convRef.current = meta.conversationId;
             setMessages((m) => {
               const next = m.filter((x) => x.id !== userTemp.id && x.id !== asstTemp.id);
@@ -186,6 +190,57 @@ export function ChatPane({
     abortRef.current?.abort();
   }
 
+  function toggleVoice() {
+    if (recogRef.current) {
+      recogRef.current.stop();
+      return;
+    }
+    const W = window as unknown as {
+      SpeechRecognition?: new () => VoiceRecog;
+      webkitSpeechRecognition?: new () => VoiceRecog;
+    };
+    const Ctor = W.SpeechRecognition || W.webkitSpeechRecognition;
+    if (!Ctor) {
+      setError("Voice input is not supported in this browser. Chrome works best.");
+      return;
+    }
+    try {
+      const recog = new Ctor();
+      recog.lang = "en-US";
+      recog.interimResults = false;
+      recog.onresult = (e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => {
+        const text = Array.from(e.results)
+          .map((r) => r[0]?.transcript || "")
+          .join(" ")
+          .trim();
+        if (text) setDraft((d) => (d ? `${d} ${text}` : text));
+      };
+      recog.onend = () => {
+        recogRef.current = null;
+        setListening(false);
+      };
+      recog.onerror = () => {
+        recogRef.current = null;
+        setListening(false);
+      };
+      recogRef.current = { stop: () => recog.stop() };
+      recog.start();
+      setListening(true);
+    } catch {
+      setError("Could not start voice input.");
+    }
+  }
+
+  type VoiceRecog = {
+    lang: string;
+    interimResults: boolean;
+    onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+    onend: (() => void) | null;
+    onerror: (() => void) | null;
+    start: () => void;
+    stop: () => void;
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="vellum-scroll min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-6 sm:px-7">
@@ -220,12 +275,25 @@ export function ChatPane({
               </p>
             ) : (
               <div>
-                <p className="font-[family-name:var(--font-mono)] text-[10px] uppercase tracking-[0.2em] text-[var(--color-ink-soft)]">
-                  Vellum
-                  {m.status === "stopped" ? " · stopped" : ""}
-                  {m.status === "streaming" ? " · writing" : ""}
+                <p className="flex items-center justify-between font-[family-name:var(--font-mono)] text-[10px] uppercase tracking-[0.2em] text-[var(--color-ink-soft)]">
+                  <span>
+                    Vellum
+                    {m.status === "stopped" ? " · stopped" : ""}
+                    {m.status === "streaming" ? " · writing" : ""}
+                  </span>
+                  {convId && (m.status === "complete" || m.status === "stopped") && m.content && (
+                    <a
+                      href={`/api/messages/${m.id}/export?conversationId=${convId}`}
+                      className="flex items-center gap-1 normal-case tracking-normal text-[var(--color-burgundy)] hover:underline"
+                      title="Download answer with verified quotes (.docx)"
+                    >
+                      <IconDownload className="h-3.5 w-3.5" />
+                      Word
+                    </a>
+                  )}
                 </p>
                 <div
+                  dir="auto"
                   className={`prose-answer mt-2 whitespace-pre-wrap font-[family-name:var(--font-serif)] text-[17px] leading-[1.55] ${
                     m.status === "streaming" ? "stream-caret" : ""
                   }`}
@@ -252,7 +320,7 @@ export function ChatPane({
                           onClick={() =>
                             onFocusCite({
                               documentId: c.documentId,
-                              quote: c.quoteText,
+                              quote: c.locator || c.quoteText,
                               pageNumber: c.pageNumber,
                               occurrence: c.occurrence,
                             })
@@ -275,7 +343,7 @@ export function ChatPane({
                               {documentNames[c.documentId] || "Document"}
                             </span>
                           )}
-                          <span className="mt-2 block text-[13px] leading-relaxed text-[var(--color-ink)]">
+                          <span dir="auto" className="mt-2 block text-[13px] leading-relaxed text-[var(--color-ink)]">
                             “{c.quoteText}”
                           </span>
                         </button>
@@ -332,6 +400,19 @@ export function ChatPane({
             placeholder="Ask about this contract…"
             className="min-h-[3.2rem] flex-1 resize-none rounded-[4px] border border-[var(--color-rule)] bg-[var(--color-paper-2)] px-3 py-2 text-sm outline-none focus:border-[var(--color-ink)]"
           />
+          <button
+            type="button"
+            onClick={toggleVoice}
+            className={`press flex h-11 w-11 shrink-0 items-center justify-center rounded-[4px] border ${
+              listening
+                ? "border-[var(--color-burgundy)] bg-[var(--color-burgundy)] text-[var(--color-paper)]"
+                : "border-[var(--color-rule)] bg-[var(--color-paper-2)] text-[var(--color-ink-soft)]"
+            }`}
+            aria-label={listening ? "Stop listening" : "Ask by voice"}
+            title="Ask by voice"
+          >
+            <IconMic className="h-4 w-4" />
+          </button>
           {streaming ? (
             <button
               type="button"
