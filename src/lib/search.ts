@@ -1,4 +1,4 @@
-import type { DocumentChunkRow, DocumentRow } from "@/db/schema";
+import type { ChunkRow, DocRow } from "./store";
 
 const STOP = new Set([
   "the",
@@ -68,7 +68,7 @@ export type SearchHit = {
 
 export function searchChunks(
   query: string,
-  docs: Array<{ document: DocumentRow; chunks: DocumentChunkRow[] }>,
+  docs: Array<{ document: DocRow; chunks: ChunkRow[] }>,
   limit = 8,
 ): SearchHit[] {
   const qTokens = tokenize(query);
@@ -119,7 +119,7 @@ export function searchChunks(
   return hits.slice(0, limit);
 }
 
-export function pagesFor(document: DocumentRow, pageStart: number, pageEnd: number, pageTexts: Array<{ pageNumber: number; text: string }>) {
+export function pagesFor(document: DocRow, pageStart: number, pageEnd: number, pageTexts: Array<{ pageNumber: number; text: string }>) {
   const from = Math.max(1, pageStart);
   const to = Math.min(document.pageCount || pageEnd, pageEnd);
   return pageTexts

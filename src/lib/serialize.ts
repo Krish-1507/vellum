@@ -1,7 +1,7 @@
-import type { CitationRow, DocumentRow, MessageRow } from "@/db/schema";
+import type { CiteRow, DocRow, MsgRow } from "./store";
 import type { DocumentSummary, SerializedMessage } from "@/lib/types";
 
-export function documentSummary(doc: DocumentRow): DocumentSummary {
+export function documentSummary(doc: DocRow): DocumentSummary {
   return {
     id: doc.id,
     name: doc.name,
@@ -21,7 +21,7 @@ export function documentSummary(doc: DocumentRow): DocumentSummary {
   };
 }
 
-export function serializeMessage(message: MessageRow, citations: CitationRow[]): SerializedMessage {
+export function serializeMessage(message: MsgRow, citations: CiteRow[]): SerializedMessage {
   return {
     id: message.id,
     role: message.role,

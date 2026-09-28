@@ -1,18 +1,15 @@
-import { writeFile } from "fs/promises";
-import path from "path";
-import { desc } from "drizzle-orm";
-import { db } from "@/db";
-import { documents } from "@/db/schema";
-import { allowedFile, ensureUploadDir, safeFilename } from "@/lib/files";
-import { saveUpload } from "@/lib/storage";
+import { createDocument, getDocumentFull } from "@/lib/store";
+import { allowedFile } from "@/lib/files";
 import { documentSummary } from "@/lib/serialize";
-import { cleanPgText } from "@/lib/pgtext";
+import { processDocument } from "@/lib/process";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 export async function GET() {
-  const rows = await db.select().from(documents).orderBy(desc(documents.createdAt));
+  const { listDocuments } = await import("@/lib/store");
+  const rows = await listDocuments();
   return Response.json({ documents: rows.map(documentSummary) });
 }
 
@@ -33,27 +30,51 @@ export async function POST(req: Request) {
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  const id = crypto.randomUUID();
-  const mimeType = cleanPgText(
-    file.type || (allowed.kind === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
-  );
-  const { storagePath } = await saveUpload(id, file.name, buffer, mimeType || "application/octet-stream");
+  const row = await createDocument({
+    name: file.name.replace(/\.(pdf|docx)$/i, ""),
+    originalFilename: file.name,
+    mimeType:
+      file.type ||
+      (allowed.kind === "pdf"
+        ? "application/pdf"
+        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    fileSize: file.size,
+    kind: allowed.kind,
+  });
 
-  const [row] = await db
-    .insert(documents)
-    .values({
-      id,
-      name: cleanPgText(file.name.replace(/\.(pdf|docx)$/i, "")),
-      originalFilename: cleanPgText(file.name),
-      mimeType,
-      fileSize: file.size,
-      storagePath,
-      kind: allowed.kind,
-      status: "queued",
-      outlineJson: [],
-      clausesJson: [],
-    })
-    .returning();
+  // Stream extraction progress; the client keeps the original bytes in
+  // IndexedDB, the server only stores the extracted text in Firestore.
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: string, data: unknown) => {
+        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+      };
+      try {
+        send("status", { message: "Uploading…" });
+        const result = await processDocument(row.id, buffer, allowed.kind, (message) =>
+          send("status", { message }),
+        );
+        if (result.ok) {
+          const full = await getDocumentFull(row.id);
+          send("done", { document: full ? documentSummary(full.doc) : documentSummary(row) });
+        } else {
+          send("error", { message: result.message });
+        }
+      } catch (err) {
+        send("error", { message: err instanceof Error ? err.message : "Processing failed." });
+      } finally {
+        controller.close();
+      }
+    },
+  });
 
-  return Response.json({ document: documentSummary(row!) }, { status: 201 });
+  return new Response(stream, {
+    status: 201,
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    },
+  });
 }

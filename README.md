@@ -29,15 +29,16 @@ Live: _(App Hosting rollout URL goes here after `firebase apphosting:backends:cr
 
 ## How to run locally
 
-Prerequisites: Node 22+, npm. No Postgres install needed — the repo ships an embedded one.
+Prerequisites: Node 22+, npm, Java 17+ (for the Firestore emulator).
 
 ```bash
 npm install
 cp .env.example .env   # then put your GROQ_API_KEY in .env
-npm run db:local        # terminal 1: zero-config Postgres on :5432 (persists in ./data/pg)
-node scripts/apply-sql.mjs   # create tables (drizzle-kit push cannot introspect PG18; generated SQL in drizzle/)
+npm run db:emulator     # terminal 1: local Firestore on :8080
 npm run dev             # terminal 2: http://localhost:3000
 ```
+
+No database install, no migrations, no Postgres. Data lives in Firestore (emulator locally, `vellum-project` in production); original file bytes stay in the browser's IndexedDB, so the server is fully stateless.
 
 Sample contracts for trying everything (chat, multi-ask, compare):
 
@@ -55,7 +56,8 @@ node scripts/e2e-check.mjs
 
 | Variable | Purpose |
 | --- | --- |
-| `DATABASE_URL` | Postgres connection string (default points at `npm run db:local`) |
+| `FIREBASE_PROJECT_ID` | Firestore project (`vellum-project` in production) |
+| `FIRESTORE_EMULATOR_HOST` | Set to `127.0.0.1:8080` for local dev; unset in production |
 | `GROQ_API_KEY` | Recommended AI key (free tier). Get one at https://console.groq.com |
 | `AI_API_KEY` | Alternative OpenAI-compatible key |
 | `AI_BASE_URL` | Override (Groq default `https://api.groq.com/openai/v1` when only `GROQ_API_KEY` is set) |
@@ -69,10 +71,9 @@ Do not commit keys (`.env` is gitignored). A `GROQ_API_KEY` pointed at OpenAI's 
 - **Hosting** — Firebase App Hosting (`apphosting.yaml` at root, tuned to stay free: 0–2 instances, 1 CPU, 1 GB). Create the backend once and connect the `Krish-1507/vellum` repo:
   `firebase apphosting:backends:create --project vellum-project`
 - **Secrets** (never committed):
-  `firebase apphosting:secrets:set DATABASE_URL --project vellum-project`
   `firebase apphosting:secrets:set GROQ_API_KEY --project vellum-project`
-  `firebase apphosting:secrets:set FIREBASE_STORAGE_BUCKET --project vellum-project`
-- **Database** — free-tier Postgres (e.g. Neon) via `DATABASE_URL`, schema in `drizzle/0000_init.sql`. It stays relational (9 tables, FK cascades) rather than Firestore: per-read billing would punish whole-document retrieval over 150 pages.
+  (`FIREBASE_PROJECT_ID` is baked into the environment; no database URL needed.)
+- **Database** — Firestore (Native mode, `asia-south1`, default-deny `firestore.rules`, deployed). All queries are key-based; 150-page retrieval costs a few hundred reads per question, comfortably inside the 50k/day free quota. Originals stay in browser IndexedDB, so there is nothing else to host.
 - **Uploads** — Firebase Cloud Storage (5 GB free, `storage.rules` default-deny; server uses Admin SDK). One click "Get started" in the Storage console, then set the bucket secret above.
 
 ## What is finished

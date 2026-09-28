@@ -19,28 +19,25 @@ async function upload(path, filename, mime) {
   const form = new FormData();
   form.append("file", new Blob([buf], { type: mime }), filename);
   const r = await fetch(`${BASE}/api/documents`, { method: "POST", body: form });
-  const j = await r.json();
-  if (!r.ok) throw new Error(`upload failed: ${j.error}`);
-  return j.document;
-}
-
-async function processDoc(id) {
-  const r = await fetch(`${BASE}/api/documents/${id}/process`, { method: "POST" });
-  if (!r.ok) throw new Error(`process failed: ${r.status}`);
   const text = await r.text();
-  let ok = false;
+  let doc = null;
   let errMsg = null;
   for (const chunk of text.split("\n\n")) {
     for (const line of chunk.split("\n")) {
       if (!line.startsWith("data:")) continue;
       const data = JSON.parse(line.slice(5).trim());
-      if (data.ok) ok = true;
-      if (data.message && !data.ok) errMsg = data.message;
+      if (data.document) doc = data.document;
+      if (data.message && !data.document) errMsg = data.message;
     }
   }
-  // Confirm final state from the API.
+  if (!doc) throw new Error(`upload failed: ${errMsg || r.status}`);
+  return doc;
+}
+
+async function processDoc(id) {
+  // Upload endpoint already extracts; just confirm final state.
   const d = await (await fetch(`${BASE}/api/documents/${id}`)).json();
-  return { ok, errMsg, status: d.document?.status, pages: d.document?.pageCount, chars: d.document?.charCount };
+  return { ok: d.document?.status === "ready", status: d.document?.status, pages: d.document?.pageCount, chars: d.document?.charCount };
 }
 
 async function chat(documentIds, message) {

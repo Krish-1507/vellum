@@ -101,7 +101,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             }`}
           >
             {dbDown
-              ? "The database is not reachable. Set DATABASE_URL in .env, then run npm run db:local in one terminal and npx drizzle-kit push."
+              ? "The database is not reachable. For local work, run npm run db:emulator in another terminal (needs Java 17+)."
               : "No AI key found. Set GROQ_API_KEY in .env to enable chat, compare summaries and clause search."}
           </div>
         )}

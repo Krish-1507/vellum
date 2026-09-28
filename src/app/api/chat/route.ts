@@ -1,18 +1,21 @@
-import { eq, inArray } from "drizzle-orm";
-import { db } from "@/db";
 import {
-  conversationDocuments,
-  conversations,
-  documentChunks,
-  documentPages,
-  documents,
-  messageCitations,
-  messages,
-  type DocumentRow,
-} from "@/db/schema";
+  addCitations,
+  addMessage,
+  createConversation,
+  getConversation,
+  getDocumentFull,
+  listChunks,
+  listCitations,
+  listMessages,
+  listPages,
+  touchConversation,
+  updateMessage,
+  type ChunkRow,
+  type DocRow,
+  type PageRow,
+} from "@/lib/store";
 import type { AgentActivity } from "@/lib/types";
 import { aiConfigured } from "@/lib/ai";
-import { cleanJson, cleanPgText } from "@/lib/pgtext";
 import { runAgent, type LoadedDoc } from "@/lib/agent";
 import { serializeMessage } from "@/lib/serialize";
 
@@ -48,71 +51,58 @@ export async function POST(req: Request) {
   if (!question) {
     return Response.json({ error: "Ask a question." }, { status: 400 });
   }
+  if (documentIds.length > 10) {
+    return Response.json({ error: "Select up to 10 documents at once." }, { status: 400 });
+  }
 
-  const docsRows = await db.select().from(documents).where(inArray(documents.id, documentIds));
-  if (docsRows.length !== documentIds.length) {
+  const fulls = await Promise.all(documentIds.map((id) => getDocumentFull(id)));
+  if (fulls.some((f) => !f)) {
     return Response.json({ error: "One of the documents is missing." }, { status: 404 });
   }
-  const notReady = docsRows.filter((d) => d.status !== "ready");
+  const notReady = fulls.filter((f) => f!.doc.status !== "ready");
   if (notReady.length) {
     return Response.json(
-      { error: `“${notReady[0]!.name}” is not ready to query yet.` },
+      { error: `“${notReady[0]!.doc.name}” is not ready to query yet.` },
       { status: 409 },
     );
   }
 
-  const loaded = await loadDocs(docsRows);
-  const mode = docsRows.length > 1 ? "multi" : "single";
+  const loaded: LoadedDoc[] = await Promise.all(
+    fulls.map(async (f) => {
+      const doc = f!.doc;
+      const [chunks, pages] = await Promise.all([listChunks(doc.id), listPages(doc.id)]);
+      return {
+        document: { ...doc, extractedText: f!.text },
+        chunks,
+        pages,
+      };
+    }),
+  );
+  const mode = documentIds.length > 1 ? "multi" : "single";
   let conversationId = body.conversationId || "";
 
   if (conversationId) {
-    const [existing] = await db
-      .select()
-      .from(conversations)
-      .where(eq(conversations.id, conversationId))
-      .limit(1);
+    const existing = await getConversation(conversationId);
     if (!existing) conversationId = "";
   }
 
   if (!conversationId) {
-    const title = cleanPgText(question.slice(0, 72));
-    const [conv] = await db
-      .insert(conversations)
-      .values({ title, mode })
-      .returning();
-    conversationId = conv!.id;
-    await db.insert(conversationDocuments).values(
-      documentIds.map((documentId) => ({ conversationId, documentId })),
-    );
+    const title = question.slice(0, 72);
+    const conv = await createConversation(title, mode, documentIds);
+    conversationId = conv.id;
   }
 
-  const [userMsg] = await db
-    .insert(messages)
-    .values({
-      conversationId,
-      role: "user",
-      content: cleanPgText(question),
-      status: "complete",
-    })
-    .returning();
+  const userMsg = await addMessage({ conversationId, role: "user", content: question });
+  const assistantMsg = await addMessage({
+    conversationId,
+    role: "assistant",
+    content: "",
+    status: "streaming",
+  });
 
-  const [assistantMsg] = await db
-    .insert(messages)
-    .values({
-      conversationId,
-      role: "assistant",
-      content: "",
-      status: "streaming",
-      activityJson: [],
-    })
-    .returning();
-
-  const historyRows = await db
-    .select()
-    .from(messages)
-    .where(eq(messages.conversationId, conversationId));
+  const historyRows = await listMessages(conversationId);
   const history = historyRows
-    .filter((m) => m.id !== assistantMsg!.id && m.id !== userMsg!.id)
+    .filter((m) => m.id !== assistantMsg.id && m.id !== userMsg.id)
     .filter((m) => m.role === "user" || m.role === "assistant")
     .filter((m) => Boolean(m.content))
     .slice(-8)
@@ -131,8 +121,8 @@ export async function POST(req: Request) {
       };
       send("meta", {
         conversationId,
-        userMessage: serializeMessage(userMsg!, []),
-        assistantId: assistantMsg!.id,
+        userMessage: serializeMessage(userMsg, []),
+        assistantId: assistantMsg.id,
       });
 
       let answer = "";
@@ -146,10 +136,7 @@ export async function POST(req: Request) {
           onStatus: async (item) => {
             activity.push(item);
             send("status", item);
-            await db
-              .update(messages)
-              .set({ activityJson: cleanJson(activity) })
-              .where(eq(messages.id, assistantMsg!.id));
+            await updateMessage(assistantMsg.id, conversationId, { activityJson: activity });
           },
           onToken: async (token) => {
             answer += token;
@@ -162,45 +149,20 @@ export async function POST(req: Request) {
         const status = stopped ? "stopped" : "complete";
 
         if (result.quotes.length) {
-          await db.insert(messageCitations).values(
-            result.quotes.map((q) => ({
-              messageId: assistantMsg!.id,
-              documentId: q.documentId,
-              quoteText: cleanPgText(q.quoteText),
-              verified: q.verified,
-              displayText: q.displayText ? cleanPgText(q.displayText) : q.displayText,
-              pageNumber: q.pageNumber,
-              pageEnd: q.pageEnd,
-              charStart: q.charStart,
-              charEnd: q.charEnd,
-              occurrence: q.occurrence,
-              totalOccurrences: q.totalOccurrences,
-              omitted: q.omitted,
-            })),
-          );
+          await addCitations(conversationId, assistantMsg.id, result.quotes);
         }
 
-        const [saved] = await db
-          .update(messages)
-          .set({
-            content: cleanPgText(content),
-            status,
-            coverage: result.coverage,
-            coverageNote: result.coverageNote ? cleanPgText(result.coverageNote) : result.coverageNote,
-            activityJson: cleanJson(result.activity),
-          })
-          .where(eq(messages.id, assistantMsg!.id))
-          .returning();
+        await updateMessage(assistantMsg.id, conversationId, {
+          content,
+          status,
+          coverage: result.coverage,
+          coverageNote: result.coverageNote,
+          activityJson: result.activity,
+        });
+        await touchConversation(conversationId);
 
-        await db
-          .update(conversations)
-          .set({ updatedAt: new Date() })
-          .where(eq(conversations.id, conversationId));
-
-        const cites = await db
-          .select()
-          .from(messageCitations)
-          .where(eq(messageCitations.messageId, assistantMsg!.id));
+        const cites = await listCitations(conversationId, [assistantMsg.id]);
+        const saved = await updateMessage(assistantMsg.id, conversationId, {});
 
         send("done", {
           message: serializeMessage(saved!, cites),
@@ -208,22 +170,19 @@ export async function POST(req: Request) {
         });
       } catch (err) {
         if (abort.aborted) {
-          const [saved] = await db
-            .update(messages)
-            .set({ content: cleanPgText(answer), status: "stopped", activityJson: cleanJson(activity) })
-            .where(eq(messages.id, assistantMsg!.id))
-            .returning();
-          send("done", { message: serializeMessage(saved!, []), droppedUnverified: 0 });
+          const saved = await updateMessage(assistantMsg.id, conversationId, {
+            content: answer,
+            status: "stopped",
+            activityJson: activity,
+          });
+          send("done", { message: serializeMessage(saved, []), droppedUnverified: 0 });
         } else {
           const message = err instanceof Error ? err.message : "The model failed.";
-          await db
-            .update(messages)
-            .set({
-              content: cleanPgText(answer || message),
-              status: "error",
-              activityJson: cleanJson(activity),
-            })
-            .where(eq(messages.id, assistantMsg!.id));
+          await updateMessage(assistantMsg.id, conversationId, {
+            content: answer || message,
+            status: "error",
+            activityJson: activity,
+          });
           send("error", { message });
         }
       } finally {
@@ -239,15 +198,4 @@ export async function POST(req: Request) {
       Connection: "keep-alive",
     },
   });
-}
-
-async function loadDocs(rows: DocumentRow[]): Promise<LoadedDoc[]> {
-  const ids = rows.map((r) => r.id);
-  const chunks = await db.select().from(documentChunks).where(inArray(documentChunks.documentId, ids));
-  const pages = await db.select().from(documentPages).where(inArray(documentPages.documentId, ids));
-  return rows.map((document) => ({
-    document,
-    chunks: chunks.filter((c) => c.documentId === document.id),
-    pages: pages.filter((p) => p.documentId === document.id),
-  }));
 }

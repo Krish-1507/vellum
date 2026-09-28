@@ -1,8 +1,10 @@
-import { eq } from "drizzle-orm";
-import { db } from "@/db";
-import { comparisonChanges, comparisons, documentPages, documents } from "@/db/schema";
+import {
+  addComparisonChanges,
+  createComparison,
+  getDocumentFull,
+  listPages,
+} from "@/lib/store";
 import { diffDocuments, pageAtFactory, summariseDiffs } from "@/lib/compare";
-import { cleanPgText } from "@/lib/pgtext";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,59 +19,36 @@ export async function POST(req: Request) {
     return Response.json({ error: "Pick two different versions." }, { status: 400 });
   }
 
-  const [left] = await db.select().from(documents).where(eq(documents.id, body.leftId)).limit(1);
-  const [right] = await db.select().from(documents).where(eq(documents.id, body.rightId)).limit(1);
-  if (!left || !right) return Response.json({ error: "Document missing." }, { status: 404 });
+  const [leftFull, rightFull] = await Promise.all([
+    getDocumentFull(body.leftId),
+    getDocumentFull(body.rightId),
+  ]);
+  if (!leftFull || !rightFull) return Response.json({ error: "Document missing." }, { status: 404 });
+  const left = leftFull.doc;
+  const right = rightFull.doc;
   if (left.status !== "ready" || right.status !== "ready") {
     return Response.json({ error: "Both documents need to finish processing first." }, { status: 409 });
   }
 
-  const leftPages = await db.select().from(documentPages).where(eq(documentPages.documentId, left.id));
-  const rightPages = await db.select().from(documentPages).where(eq(documentPages.documentId, right.id));
+  const [leftPages, rightPages] = await Promise.all([listPages(left.id), listPages(right.id)]);
 
   const changes = diffDocuments(
-    left.extractedText,
-    right.extractedText,
+    leftFull.text,
+    rightFull.text,
     pageAtFactory(leftPages),
     pageAtFactory(rightPages),
   );
   const summary = await summariseDiffs(left.name, right.name, changes, req.signal);
 
-  const [row] = await db
-    .insert(comparisons)
-    .values({
-      leftDocumentId: left.id,
-      rightDocumentId: right.id,
-      summary: cleanPgText(summary),
-    })
-    .returning();
-
-  if (changes.length) {
-    await db.insert(comparisonChanges).values(
-      changes.map((c, i) => ({
-        comparisonId: row!.id,
-        changeType: c.changeType,
-        significance: c.significance,
-        significanceScore: c.significanceScore,
-        title: cleanPgText(c.title),
-        explanation: cleanPgText(c.explanation),
-        leftText: c.leftText ? cleanPgText(c.leftText) : c.leftText,
-        rightText: c.rightText ? cleanPgText(c.rightText) : c.rightText,
-        leftPage: c.leftPage,
-        rightPage: c.rightPage,
-        sortOrder: i,
-      })),
-    );
-  }
-
-  const stored = await db
-    .select()
-    .from(comparisonChanges)
-    .where(eq(comparisonChanges.comparisonId, row!.id));
+  const row = await createComparison(left.id, right.id, summary);
+  const stored = await addComparisonChanges(
+    row.id,
+    changes.map((c, i) => ({ ...c, sortOrder: i })),
+  );
 
   return Response.json({
     comparison: {
-      id: row!.id,
+      id: row.id,
       summary,
       left: { id: left.id, name: left.name },
       right: { id: right.id, name: right.name },

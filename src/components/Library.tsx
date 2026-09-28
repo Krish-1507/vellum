@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { DocumentSummary } from "@/lib/types";
 import { readSse } from "@/lib/sse";
+import { deleteLocalFile, saveLocalFile } from "@/lib/localfiles";
 import { IconAlert, IconFile, IconTrash, IconUpload } from "./icons";
 
 function formatBytes(n: number) {
@@ -51,27 +52,35 @@ export function Library() {
       try {
         const form = new FormData();
         form.append("file", file);
-        const created = await fetch("/api/documents", { method: "POST", body: form });
-        const json = (await created.json()) as { document?: DocumentSummary; error?: string };
-        if (!created.ok || !json.document) {
-          throw new Error(json.error || "Upload failed.");
+        // One request: the server streams extraction progress back, stores
+        // the text in Firestore, and keeps no copy. The original stays here,
+        // in this browser, for the page preview.
+        const res = await fetch("/api/documents", { method: "POST", body: form });
+        if (!res.ok && !res.body) {
+          const err = await res.json().catch(() => ({ error: "Upload failed." }));
+          throw new Error((err as { error?: string }).error || "Upload failed.");
         }
-        setDocs((prev) => [json.document!, ...(prev || []).filter((d) => d.id !== json.document!.id)]);
-        setProgress("Extracting text…");
-        const proc = await fetch(`/api/documents/${json.document.id}/process`, { method: "POST" });
-        if (!proc.ok) {
-          const err = await proc.json().catch(() => ({ error: "Processing failed." }));
-          throw new Error((err as { error?: string }).error || "Processing failed.");
-        }
-        let fail: string | null = null;
-        await readSse(proc, {
+        let doneDoc: DocumentSummary | null = null;
+        let failMsg: string | null = null;
+        await readSse(res, {
           onEvent: (event, data) => {
-            const payload = data as { message?: string };
+            const payload = data as { message?: string; document?: DocumentSummary };
             if (event === "status" && payload.message) setProgress(payload.message);
-            if (event === "error") fail = payload.message || "Processing failed.";
+            if (event === "done" && payload.document) doneDoc = payload.document;
+            if (event === "error") failMsg = payload.message || "Processing failed.";
           },
         });
-        if (fail) throw new Error(fail);
+        const outcome = () => ({
+          doc: doneDoc as DocumentSummary | null,
+          fail: failMsg as string | null,
+        });
+        const failed = outcome().fail;
+        const finished = outcome().doc;
+        if (failed) throw new Error(failed);
+        if (finished) {
+          await saveLocalFile(finished.id, file, file.name, file.type);
+          setDocs((prev) => [finished, ...(prev || []).filter((d) => d.id !== finished.id)]);
+        }
         await load();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Upload failed.");
@@ -87,6 +96,7 @@ export function Library() {
   async function onDelete(id: string) {
     const prev = docs;
     setDocs((d) => (d || []).filter((x) => x.id !== id));
+    await deleteLocalFile(id);
     const res = await fetch(`/api/documents/${id}`, { method: "DELETE" });
     if (!res.ok) setDocs(prev);
   }
@@ -94,8 +104,9 @@ export function Library() {
   const ready = useMemo(() => (docs || []).filter((d) => d.status === "ready").length, [docs]);
 
   return (
-    <div className="vellum-scroll flex-1 overflow-y-auto px-5 py-8 sm:px-8 lg:px-12 lg:py-10">
-      <header className="max-w-3xl">
+    <div className="vellum-scroll flex-1 overflow-y-auto px-5 py-10 sm:px-8 lg:py-14">
+      <div className="mx-auto w-full max-w-3xl">
+      <header>
         <p className="font-[family-name:var(--font-mono)] text-[11px] uppercase tracking-[0.22em] text-[var(--color-burgundy)]">
           Reading room
         </p>
@@ -169,7 +180,7 @@ export function Library() {
         </p>
       )}
 
-      <section className="mt-12 max-w-4xl">
+      <section className="mt-12">
           <div className="mb-4 flex items-baseline justify-between">
             <h2 className="font-[family-name:var(--font-serif)] text-xl">The shelf</h2>
           <p className="font-[family-name:var(--font-mono)] text-[11px] uppercase tracking-[0.16em] text-[var(--color-ink-soft)]">
@@ -234,6 +245,7 @@ export function Library() {
           </ul>
         )}
       </section>
+      </div>
     </div>
   );
 }

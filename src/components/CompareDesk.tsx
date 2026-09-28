@@ -65,7 +65,8 @@ export function CompareDesk() {
   }
 
   return (
-    <div className="vellum-scroll flex-1 overflow-y-auto px-5 py-8 sm:px-8 lg:px-12 lg:py-10">
+    <div className="vellum-scroll flex-1 overflow-y-auto px-5 py-8 sm:px-8 lg:py-10">
+      <div className="mx-auto w-full max-w-4xl">
       <header className="max-w-3xl">
         <p className="font-[family-name:var(--font-mono)] text-[11px] uppercase tracking-[0.22em] text-[var(--color-burgundy)]">
           Two versions
@@ -193,6 +194,7 @@ export function CompareDesk() {
           </ul>
         </section>
       )}
+      </div>
     </div>
   );
 }

@@ -1,13 +1,13 @@
 import { chatComplete, chatStream, type ChatMessage, type ToolCall, type ToolDef } from "./ai";
 import { parseCitationsBlock, verifyQuotes, type PageSpan } from "./quotes";
 import { searchChunks, type SearchHit } from "./search";
-import type { DocumentChunkRow, DocumentPageRow, DocumentRow } from "@/db/schema";
+import type { ChunkRow, DocRow, PageRow } from "./store";
 import type { AgentActivity } from "@/lib/types";
 
 export type LoadedDoc = {
-  document: DocumentRow;
-  chunks: DocumentChunkRow[];
-  pages: DocumentPageRow[];
+  document: DocRow & { extractedText: string };
+  chunks: ChunkRow[];
+  pages: PageRow[];
 };
 
 const MAX_ROUNDS = 6;

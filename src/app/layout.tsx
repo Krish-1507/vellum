@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { IBM_Plex_Mono, Newsreader, Source_Sans_3 } from "next/font/google";
 import { AppShell } from "@/components/AppShell";
@@ -25,9 +25,30 @@ const ibm = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Vellum — contract desk",
+  title: {
+    default: "Vellum — contract desk",
+    template: "%s · Vellum",
+  },
   description:
-    "Upload a contract, ask what it actually says, and open the verified passage on the page.",
+    "Upload a contract, ask what it actually says, and open the verified passage on the page. Every answer backed by a quote that was found in the document.",
+  applicationName: "Vellum",
+  keywords: ["contracts", "legal tech", "contract analysis", "verified citations"],
+  openGraph: {
+    type: "website",
+    title: "Vellum — contract desk",
+    description: "Ask what the contract actually says. Every answer backed by a verified quote.",
+  },
+  twitter: {
+    card: "summary",
+    title: "Vellum — contract desk",
+    description: "Ask what the contract actually says. Every answer backed by a verified quote.",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#efe6d4",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
