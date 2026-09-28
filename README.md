@@ -4,16 +4,18 @@ A contract desk: upload a PDF or Word file, ask questions, and get answers that 
 
 No accounts. One user. Built for the engineering assignment (Parts A, B, and C option 2).
 
+Live: _(App Hosting rollout URL goes here after `firebase apphosting:backends:create`)_ · Repo: https://github.com/Krish-1507/vellum
+
 ## What it does
 
-- **Upload & library** — PDF and `.docx` only. Other types are rejected with a clear message. Processing status is streamed while text is extracted. Scanned PDFs with no selectable text are refused instead of being saved empty.
-- **Chat** — Questions stream token by token. Stop mid-answer and keep what was written. History is stored per document.
-- **Verified quotes** — Every citation is searched in the extracted text with whitespace folding. Invented or paraphrased quotes are dropped, never shown as genuine.
-- **Large files** — A 150-page contract is chunked. The model does not receive the whole file. It looks things up with tools. If it only read part of the file, the UI says so.
-- **Citation highlighting** — Clicking a quote opens that page and paints the passage. Quotes that wrap lines, cross a page break, or appear more than once are handled.
-- **Multi-document questions** — Select several files, ask once. The answer is comparative; each quote names its source and is verified against that file only.
-- **Comparison** — Two versions, clause-level diffs, a plain-language summary, filter by high / medium / low significance. Rewording is not treated as a commercial change.
-- **Part C: agentic research** — `search_document`, `get_section`, `list_clauses`, `get_pages`. Multi-round loop, live status (“Searching for termination provisions…”), hard cap of 6 rounds, malformed tool calls swallowed.
+- **Upload & library** — PDF and `.docx` only. Other types are rejected with a clear message. Processing status streams while text is extracted. Scanned PDFs with no selectable text are refused instead of being saved empty.
+- **Chat** — Questions stream token by token with a live tool-activity feed ("Searching for liability cap…"). Stop mid-answer and keep what was written. History is stored per document.
+- **Verified quotes** — Every citation is searched in the extracted text with whitespace folding. Invented or paraphrased quotes are dropped, never shown as genuine. Click a quote to open the passage highlighted on the page.
+- **Large files** — A 150-page contract is chunked. The model never receives the whole file; an agent loop looks things up with `search_document`, `get_section`, `list_clauses`, `get_pages` (max 6 rounds). If it only read part of the file, the UI warns that absence of a clause is not certain.
+- **Citation highlighting** — Glyph-level mapping on PDFs, text-range mapping on Word exports. Quotes wrapping lines, crossing page breaks, or appearing more than once are handled.
+- **Multi-document questions** — Select several files, ask once. One comparative answer; each quote names its source and is verified against that file only.
+- **Comparison** — Two versions, clause-level diffs, a plain-language substance summary (rewording is not treated as a commercial change), filter by high / medium / low significance.
+- **Part C: agentic research** — real multi-round tool loop, live status, hard round cap, malformed tool calls handled, quotes still verified on the final answer.
 
 ## Screenshots
 
@@ -27,25 +29,51 @@ No accounts. One user. Built for the engineering assignment (Parts A, B, and C o
 
 ## How to run locally
 
+Prerequisites: Node 22+, npm. No Postgres install needed — the repo ships an embedded one.
+
 ```bash
 npm install
-cp .env.example .env   # or edit .env
-npx drizzle-kit push
-npm run dev
+cp .env.example .env   # then put your GROQ_API_KEY in .env
+npm run db:local        # terminal 1: zero-config Postgres on :5432 (persists in ./data/pg)
+node scripts/apply-sql.mjs   # create tables (drizzle-kit push cannot introspect PG18; generated SQL in drizzle/)
+npm run dev             # terminal 2: http://localhost:3000
 ```
 
-PostgreSQL should be reachable at `DATABASE_URL`.
+Sample contracts for trying everything (chat, multi-ask, compare):
+
+```bash
+node scripts/make-sample-pdf.mjs   # writes data/samples/contract-v1.pdf + contract-v2.pdf
+```
+
+End-to-end smoke test (upload → process → agentic chat → compare, needs dev server + keys):
+
+```bash
+node scripts/e2e-check.mjs
+```
 
 ### Environment
 
 | Variable | Purpose |
 | --- | --- |
-| `DATABASE_URL` | Postgres connection string |
-| `AI_API_KEY` | API key (OpenAI-compatible). Also accepts `OPENAI_API_KEY` or `OPENROUTER_API_KEY` |
-| `AI_BASE_URL` | Default `https://api.openai.com/v1` |
-| `AI_MODEL` | Default `gpt-4o-mini` |
+| `DATABASE_URL` | Postgres connection string (default points at `npm run db:local`) |
+| `GROQ_API_KEY` | Recommended AI key (free tier). Get one at https://console.groq.com |
+| `AI_API_KEY` | Alternative OpenAI-compatible key |
+| `AI_BASE_URL` | Override (Groq default `https://api.groq.com/openai/v1` when only `GROQ_API_KEY` is set) |
+| `AI_MODEL` | Override (Groq default `openai/gpt-oss-120b`: 131k context, tool use, $0.15/$0.60 per 1M) |
+| `FIREBASE_STORAGE_BUCKET` | Optional. When set, uploads go to Firebase Storage; otherwise local disk |
 
-Do not commit keys.
+Do not commit keys (`.env` is gitignored). A `GROQ_API_KEY` pointed at OpenAI's base URL (or vice versa) fails fast with a plain message instead of a cryptic 401.
+
+## Deploy (free tier)
+
+- **Hosting** — Firebase App Hosting (`apphosting.yaml` at root, tuned to stay free: 0–2 instances, 1 CPU, 1 GB). Create the backend once and connect the `Krish-1507/vellum` repo:
+  `firebase apphosting:backends:create --project vellum-project`
+- **Secrets** (never committed):
+  `firebase apphosting:secrets:set DATABASE_URL --project vellum-project`
+  `firebase apphosting:secrets:set GROQ_API_KEY --project vellum-project`
+  `firebase apphosting:secrets:set FIREBASE_STORAGE_BUCKET --project vellum-project`
+- **Database** — free-tier Postgres (e.g. Neon) via `DATABASE_URL`, schema in `drizzle/0000_init.sql`. It stays relational (9 tables, FK cascades) rather than Firestore: per-read billing would punish whole-document retrieval over 150 pages.
+- **Uploads** — Firebase Cloud Storage (5 GB free, `storage.rules` default-deny; server uses Admin SDK). One click "Get started" in the Storage console, then set the bucket secret above.
 
 ## What is finished
 
@@ -54,6 +82,7 @@ Do not commit keys.
 - Part C option 2 (agentic document research), including live tool activity, round cap, and quote verification on the final answer
 - Clause detection used by `list_clauses`
 - Comparison significance ranking
+- Production storage path (Firebase Storage with local-disk fallback)
 
 ## What is not
 

@@ -33,3 +33,9 @@ Hardest part: keeping the final streamed answer honest when the model wants to c
 - Embedding retrieval alongside the lexical search
 - Real DOCX tracked changes (option 1), touching only the runs that moved
 - Export of an answer + verified quotes to Word
+
+## Production lessons (learned the hard way, kept)
+
+- **Database encoding.** On a Windows machine whose locale is not UTF8, a locally initialised Postgres cluster defaults to `WIN1252`, and every insert of an em-dash, curly quote or Arabic character fails with `22P05`. `npm run db:local` now forces `ENCODING 'UTF8'` (via `template0`) and recreates a non-UTF8 database. Separately, model output occasionally contains NUL bytes, which even UTF8 Postgres rejects — `src/lib/pgtext.ts` strips NULs and lone surrogates at every write site.
+- **Model choice.** The Groq default is `openai/gpt-oss-120b`, not `llama-3.3-70b-versatile`: the latter moved to Groq enterprise-only and 404s on free keys. `gpt-oss-120b` has 131k context, native tool use, and costs cents per session. A config guard fails fast if a Groq key is pointed at OpenAI's base URL or vice versa.
+- **Uploads.** Local disk works for development only; serverless hosts have ephemeral filesystems, so production uploads go to Firebase Cloud Storage (`FIREBASE_STORAGE_BUCKET`) with a disk fallback. The relational data stays on Postgres rather than Firestore: whole-document retrieval over 150 pages fits a relational scan, not per-read billing.

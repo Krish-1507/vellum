@@ -109,6 +109,7 @@ export function CompareDesk() {
         </label>
         <button
           type="button"
+          data-testid="run-compare"
           disabled={busy || !leftId || !rightId}
           onClick={() => void run()}
           className="press rounded-[4px] bg-[var(--color-ink)] px-5 py-2.5 text-sm text-[var(--color-paper)] disabled:opacity-40"

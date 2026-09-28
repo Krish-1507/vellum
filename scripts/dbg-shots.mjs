@@ -1,0 +1,14 @@
+import { chromium } from "playwright";
+const BASE = "http://127.0.0.1:3000";
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+page.on("console", (m) => console.log("CONSOLE:", m.type(), m.text().slice(0, 300)));
+page.on("pageerror", (e) => console.log("PAGEERROR:", String(e).slice(0, 500)));
+page.on("requestfailed", (r) => console.log("REQFAIL:", r.url(), r.failure()?.errorText));
+await page.goto(`${BASE}/compare`, { waitUntil: "networkidle" });
+await page.waitForTimeout(3000);
+console.log("selects:", await page.locator("select").count());
+console.log("options:", await page.locator("select option").count());
+console.log("body snippet:", (await page.locator("body").innerText()).slice(0, 400));
+await page.screenshot({ path: "docs/screenshots/compare-debug.png" });
+await browser.close();
