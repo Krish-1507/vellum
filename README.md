@@ -151,6 +151,8 @@ B5 is covered by the glyph-mapping implementation plus the `highlight.png` scree
 
 ## What is finished and what is not
 
-**Finished:** A1–A4, B5–B7, Part C Option 2 (live tool activity, round cap, malformed-call handling, quote verification), clause detection powering `list_clauses`, browser-side originals with Firestore text/history, free-tier deployment path.
+**Finished:** A1–A4, B5–B7, Part C Option 2 (live tool activity, round cap, malformed-call handling, quote verification), clause detection powering `list_clauses` plus a Clauses tab in the workspace, browser-side originals with Firestore text/history, free-tier deployment path.
 
-**Not built:** Part C Option 1 (tracked-change redlining — deliberately not chosen). Optional extras (anonymise, embeddings/semantic search, answer export, Arabic RTL UI, background job recovery, voice input) are not in this build — per the brief, an unfinished extra does not help, so effort stayed on Parts A–C. Demo video is a submission artefact, recorded separately.
+**Extras (all working):** reversible anonymise (`[PERSON_1]`… with a per-document toggle; originals always stored), semantic search (local MiniLM embeddings cached per chunk, fused 50/50 with lexical, lexical fallback), answer export to Word with verified quotes, voice input, retry/reprocess recovery for failed or interrupted jobs, Arabic RTL content areas, and a Chats history page with search.
+
+**Not built:** Part C Option 1 (tracked-change redlining — deliberately not chosen). Demo video is a submission artefact, recorded separately.
