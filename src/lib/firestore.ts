@@ -15,10 +15,19 @@ export async function getDb(): Promise<FirestoreDb> {
   if (apps.length === 0) {
     const init = (
       admin as unknown as {
-        initializeApp: (opts: Record<string, string | undefined>) => void;
+        initializeApp: (opts: Record<string, unknown>) => void;
       }
     ).initializeApp;
-    init({ projectId });
+    const serviceKey = (process.env.FIREBASE_SERVICE_KEY || "").trim();
+    if (serviceKey) {
+      // Production on hosts without GCP metadata (e.g. Vercel): paste the
+      // whole service-account JSON into FIREBASE_SERVICE_KEY.
+      const { cert } = await import("firebase-admin/app");
+      init({ credential: cert(JSON.parse(serviceKey)), projectId });
+    } else {
+      // App Hosting / Cloud Run (ADC) or emulator (no credentials needed).
+      init({ projectId });
+    }
   }
   const { getFirestore } = await import("firebase-admin/firestore");
   cached = getFirestore();

@@ -68,12 +68,12 @@ Do not commit keys (`.env` is gitignored). A `GROQ_API_KEY` pointed at OpenAI's 
 
 ## Deploy (free tier)
 
-- **Hosting** — Firebase App Hosting (`apphosting.yaml` at root, tuned to stay free: 0–2 instances, 1 CPU, 1 GB). Create the backend once and connect the `Krish-1507/vellum` repo:
-  `firebase apphosting:backends:create --project vellum-project`
-- **Secrets** (never committed):
-  `firebase apphosting:secrets:set GROQ_API_KEY --project vellum-project`
-  (`FIREBASE_PROJECT_ID` is baked into the environment; no database URL needed.)
-- **Database** — Firestore (Native mode, `asia-south1`, default-deny `firestore.rules`, deployed). All queries are key-based; 150-page retrieval costs a few hundred reads per question, comfortably inside the 50k/day free quota. Originals stay in browser IndexedDB, so there is nothing else to host.
+- **Hosting** — Vercel Hobby (free, Next.js-native, API routes work unchanged). Firebase Hosting is static-only and cannot run this app; Firebase App Hosting needs the Blaze plan, so Vercel is the free path. Firebase stays as the database (`vellum-project` Firestore, Spark free):
+  `npx vercel` (link the `Krish-1507/vellum` repo for auto-deploys)
+- **Environment on Vercel** — add three variables in the dashboard:
+  `GROQ_API_KEY` (your key), `FIREBASE_PROJECT_ID=vellum-project`,
+  `FIREBASE_SERVICE_KEY` (service-account JSON — Firebase console → Project settings → Service accounts → Generate key)
+- **Database** — Firestore (Native mode, `asia-south1`, default-deny `firestore.rules`, already deployed). All queries are key-based; 150-page retrieval costs a few hundred reads per question, comfortably inside the 50k/day free quota. Originals stay in browser IndexedDB, so there is nothing else to host.
 - **Uploads** — Firebase Cloud Storage (5 GB free, `storage.rules` default-deny; server uses Admin SDK). One click "Get started" in the Storage console, then set the bucket secret above.
 
 ## What is finished
