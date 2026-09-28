@@ -11,7 +11,7 @@ export type LoadedDoc = {
 };
 
 const MAX_ROUNDS = 6;
-const TOOL_CHAR_CAP = 7000;
+const TOOL_CHAR_CAP = 2500;
 
 const TOOLS: ToolDef[] = [
   {
@@ -153,7 +153,7 @@ function runTool(call: ToolCall, docs: LoadedDoc[]): { result: string; activity:
     const hits = searchChunks(
       query,
       scope.map((d) => ({ document: d.document, chunks: d.chunks })),
-      8,
+      5,
     );
     return {
       result: clip(formatHits(hits)),
@@ -272,7 +272,7 @@ function systemPrompt(docs: LoadedDoc[], multi: boolean) {
   const roster = docs
     .map((d) => {
       const outline = (d.document.outlineJson || [])
-        .slice(0, 25)
+        .slice(0, 12)
         .map((o) => `    - ${o.heading} (p.${o.page})`)
         .join("\n");
       return `- ${d.document.name} [id: ${d.document.id}] · ${d.document.pageCount} pages · ${d.document.charCount} chars\n${outline}`;

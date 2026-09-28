@@ -99,44 +99,59 @@ export async function chatComplete(opts: {
   }
   assertSaneConfig();
 
+  // Cap output length so one answer can never burn through a free-tier
+  // allowance. 1024 tokens is plenty for a contract answer + citations.
+  const MAX_OUT = 1024;
+
   const body: Record<string, unknown> = {
     model,
     messages: opts.messages,
     temperature: opts.temperature ?? 0.15,
-    // Cap output length so one answer can never burn through a free-tier
-    // allowance. 2048 tokens is plenty for a contract answer + citations.
-    max_tokens: 2048,
+    max_tokens: MAX_OUT,
   };
   if (opts.tools?.length) {
     body.tools = opts.tools;
     body.tool_choice = "auto";
   }
 
-  const res = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify(body),
-    signal: opts.signal,
-  });
+  // Retry once on 429, honouring the provider's wait time. Free tiers
+  // throttle; a short nap beats an error page.
+  let lastError = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    });
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`AI request failed (${res.status}): ${text.slice(0, 400)}`);
-  }
-
-  const json = (await res.json()) as {
-    choices?: Array<{
-      message?: {
-        content?: string | null;
-        tool_calls?: ToolCall[];
+    if (res.ok) {
+      const json = (await res.json()) as {
+        choices?: Array<{
+          message?: {
+            content?: string | null;
+            tool_calls?: ToolCall[];
+          };
+        }>;
       };
-    }>;
-  };
-  const message = json.choices?.[0]?.message;
-  return {
-    content: message?.content || "",
-    toolCalls: message?.tool_calls || [],
-  };
+      const message = json.choices?.[0]?.message;
+      return {
+        content: message?.content || "",
+        toolCalls: message?.tool_calls || [],
+      };
+    }
+
+    const text = await res.text().catch(() => "");
+    lastError = `AI request failed (${res.status}): ${text.slice(0, 400)}`;
+    if (res.status === 429 && attempt < 2 && !opts.signal?.aborted) {
+      const waitMatch = /try again in ([\d.]+)s/i.exec(text);
+      const waitMs = Math.min(30000, Math.max(2000, Math.round(parseFloat(waitMatch?.[1] || "8") * 1000)));
+      await new Promise((r) => setTimeout(r, waitMs));
+      continue;
+    }
+    throw new Error(lastError);
+  }
+  throw new Error(lastError);
 }
 
 export async function chatStream(opts: {
@@ -151,22 +166,36 @@ export async function chatStream(opts: {
   }
   assertSaneConfig();
 
-  const res = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify({
-      model,
-      messages: opts.messages,
-      temperature: opts.temperature ?? 0.15,
-      max_tokens: 2048,
-      stream: true,
-    }),
-    signal: opts.signal,
-  });
-
-  if (!res.ok || !res.body) {
+  // Same 429 patience as chatComplete: retry the stream before giving up.
+  let res: Response | null = null;
+  let lastError = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    res = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        model,
+        messages: opts.messages,
+        temperature: opts.temperature ?? 0.15,
+        max_tokens: 1024,
+        stream: true,
+      }),
+      signal: opts.signal,
+    });
+    if (res.ok && res.body) break;
     const text = await res.text().catch(() => "");
-    throw new Error(`AI stream failed (${res.status}): ${text.slice(0, 400)}`);
+    lastError = `AI stream failed (${res.status}): ${text.slice(0, 400)}`;
+    if (res.status === 429 && attempt < 2 && !opts.signal?.aborted) {
+      const waitMatch = /try again in ([\d.]+)s/i.exec(text);
+      const waitMs = Math.min(45000, Math.max(2000, Math.round(parseFloat(waitMatch?.[1] || "10") * 1000)));
+      await new Promise((r) => setTimeout(r, waitMs));
+      continue;
+    }
+    throw new Error(lastError);
+  }
+
+  if (!res || !res.ok || !res.body) {
+    throw new Error(lastError || "AI stream failed.");
   }
 
   const reader = res.body.getReader();

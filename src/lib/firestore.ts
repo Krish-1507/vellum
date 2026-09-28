@@ -4,12 +4,25 @@
 import { cleanJson } from "./pgtext";
 
 const projectId = process.env.FIREBASE_PROJECT_ID || "vellum-project";
+const emulatorHost = (process.env.FIRESTORE_EMULATOR_HOST || "").trim();
+const serviceKey = (process.env.FIREBASE_SERVICE_KEY || "").trim();
 
 type FirestoreDb = import("firebase-admin/firestore").Firestore;
 let cached: FirestoreDb | null = null;
 
+export function credentialsHint(): string | null {
+  if (emulatorHost || serviceKey) return null;
+  return (
+    "Firestore credentials are missing. Locally, set FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 " +
+    "and run npm run db:emulator. In production, set FIREBASE_SERVICE_KEY to a service-account " +
+    "JSON key and FIREBASE_PROJECT_ID to your project id."
+  );
+}
+
 export async function getDb(): Promise<FirestoreDb> {
   if (cached) return cached;
+  const hint = credentialsHint();
+  if (hint) throw new Error(hint);
   const admin = await import("firebase-admin");
   const apps = (admin as unknown as { apps: unknown[] }).apps || [];
   if (apps.length === 0) {
@@ -18,7 +31,6 @@ export async function getDb(): Promise<FirestoreDb> {
         initializeApp: (opts: Record<string, unknown>) => void;
       }
     ).initializeApp;
-    const serviceKey = (process.env.FIREBASE_SERVICE_KEY || "").trim();
     if (serviceKey) {
       // Production on hosts without GCP metadata (e.g. Vercel): paste the
       // whole service-account JSON into FIREBASE_SERVICE_KEY.
