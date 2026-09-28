@@ -1,0 +1,29 @@
+# Firebase App Hosting backend for Vellum (Next.js, free tier).
+# After pushing to GitHub: create the backend once with
+#   firebase apphosting:backends:create --project vellum-project
+# and connect it to the Krish-1507/vellum repo (or roll out from local
+# source from the Firebase console). Then store secrets (values never
+# committed):
+#   firebase apphosting:secrets:set DATABASE_URL --project vellum-project
+#   firebase apphosting:secrets:set GROQ_API_KEY --project vellum-project
+# Database: free-tier Postgres (e.g. Neon) via DATABASE_URL. The schema is
+# relational (9 tables, FK cascades), which is why it stays on Postgres
+# instead of Firestore — per-read billing would punish 150-page retrieval.
+# Uploads: Firebase Cloud Storage bucket (5 GB free). One click
+# "Get started" in Storage console, then:
+#   firebase apphosting:secrets:set FIREBASE_STORAGE_BUCKET --project vellum-project
+# (value like vellum-project.appspot.com). Without it the app falls back to
+# local disk, which only suits local development.
+runConfig:
+  minInstances: 0
+  maxInstances: 2
+  concurrency: 80
+  cpu: 1
+  memoryMiB: 1024
+env:
+  - variable: DATABASE_URL
+    secret: DATABASE_URL
+  - variable: GROQ_API_KEY
+    secret: GROQ_API_KEY
+  - variable: FIREBASE_STORAGE_BUCKET
+    secret: FIREBASE_STORAGE_BUCKET

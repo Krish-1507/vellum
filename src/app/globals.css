@@ -1,0 +1,192 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-source), "Source Sans 3", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-newsreader), Newsreader, ui-serif, Georgia, serif;
+  --font-mono: var(--font-ibm), "IBM Plex Mono", ui-monospace, monospace;
+  --color-paper: #efe6d4;
+  --color-paper-2: #f6f0e4;
+  --color-paper-3: #e7dcc6;
+  --color-ink: #1b1611;
+  --color-ink-soft: #5e564c;
+  --color-rule: #d3c6ae;
+  --color-burgundy: #6f2c33;
+  --color-burgundy-2: #8c3d45;
+  --color-forest: #2c4a3c;
+  --color-highlight: #ead56a;
+  --color-ochre: #b26a2a;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+  opacity: 0.045;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-highlight) 70%, white);
+  color: var(--color-ink);
+}
+
+.vellum-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.vellum-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-ink) 22%, transparent);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.vellum-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+mark.vellum-hit {
+  background: color-mix(in srgb, var(--color-highlight) 82%, white);
+  color: inherit;
+  padding: 0 0.08em;
+  box-shadow: inset 0 -0.08em 0 color-mix(in srgb, var(--color-burgundy) 35%, transparent);
+}
+
+.prose-answer p {
+  margin: 0 0 0.9em;
+}
+.prose-answer p:last-child {
+  margin-bottom: 0;
+}
+
+.sheet {
+  background: var(--color-paper-2);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, white 55%, transparent),
+    0 18px 40px color-mix(in srgb, var(--color-ink) 10%, transparent);
+}
+
+@keyframes vellum-ink {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ink-in {
+  animation: vellum-ink 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Staggered entry: set style={{ "--i": n }} on siblings. */
+.rise {
+  animation: vellum-ink 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 55ms);
+}
+
+/* Streaming caret for answers being written. */
+.stream-caret::after {
+  content: "";
+  display: inline-block;
+  width: 0.55em;
+  height: 1.05em;
+  margin-left: 0.15em;
+  vertical-align: text-bottom;
+  background: var(--color-burgundy);
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* Skeleton shimmer for loading states. */
+.skel {
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-ink) 7%, var(--color-paper-2));
+}
+.skel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    color-mix(in srgb, white 65%, transparent) 50%,
+    transparent 80%
+  );
+  animation: skel-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes skel-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* Tactile press on interactive elements. */
+.press {
+  transition:
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 200ms ease,
+    border-color 200ms ease,
+    color 200ms ease;
+}
+.press:active {
+  transform: scale(0.98);
+}
+
+/* Visible keyboard focus everywhere. */
+:where(a, button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--color-burgundy);
+  outline-offset: 2px;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ink-in,
+  .rise {
+    animation: none;
+  }
+  .skel::after,
+  .stream-caret::after {
+    animation: none;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+@keyframes pulse-rule {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}

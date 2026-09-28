@@ -1,0 +1,11 @@
+// Contract uploads are written by the server (Admin SDK), never directly by
+// browsers, so default-deny is correct. Deploy with:
+//   firebase deploy --only storage --project vellum-project
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
